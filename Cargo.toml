@@ -1,7 +1,7 @@
 [package]
 name = "kv-assets"
 version = "0.2.1"
-authors = ["steve <dev@somecool.net>"]
+authors = ["stevelr <git@somecool.net>"]
 edition = "2018"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
