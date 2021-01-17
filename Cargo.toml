@@ -1,0 +1,35 @@
+[package]
+name = "kv-assets"
+version = "0.2.1"
+authors = ["steve <dev@somecool.net>"]
+edition = "2018"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+description = "Serve static assets from Workers KV storage"
+repository = "https://github.com/stevelr/kv-assets"
+homepage = "https://github.com/stevelr/kv-assets"
+keywords = ["cloudflare","workers","kv","http"]
+categories = ["web-programming::http-server","command-line-utilities","api-bindings"]
+documentation = "https://docs.rs/kv-assets"
+
+[dependencies]
+bincode = "1.3"
+bytes = "1.0"
+reqwest = { version="0.11", features=["json"] }
+serde_json = "1.0"
+serde = { version="1.0", features=["derive"] }
+thiserror = "1.0"
+
+# the CLI tool kv-sync has additional dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+clap = "3.0.0-beta.2"
+failure = "0.1"
+indicatif = "0.15"
+wrangler = "1.12"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.2"
+
+[[bin]]
+name = "kv-sync"
+path = "bin/kv-sync.rs"
