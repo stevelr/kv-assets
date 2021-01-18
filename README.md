@@ -1,3 +1,5 @@
+# kv-assets & kv-sync
+
 Store static assets in Workers KV for Rust-WASM Worker HTTP servers
 
 The command-line program `kv-sync`, is a build tool that syncs
@@ -65,12 +67,19 @@ to Cargo.toml:
 Run `kv-sync` at least once before publishing the worker the first time.
 This will upload the files _and_ generate the manifest.
 
-It is not necessary to run `kv-sync` again until assets (anything in the
-`public` folder changes). If a file in that folder changes, run the
-following:
-  - `kv-sync && wrangler publish`
-  - `kv-sync --prune`
-The first kv-sync will regnerate the manifest and upload modified files;
-wrangler publish will publish the code; if publish succeeds, it is safe
+It is not necessary to run `kv-sync` again until there is a change
+to assets (anything in the `public` folder). 
+If a file in that folder changes, run the following:
+
+```sh
+kv-sync
+wrangler publish
+# if wrangler publish succeeded without errors, then also run
+kv-sync --prune
+```
+
+The first kv-sync regnerates the manifest and uploads modified files;
+and wrangler publish publishes the code with the updated manifest.
+if publish succeeds, it is safe
 to run the prune step to remove old assets in KV storage.
     
