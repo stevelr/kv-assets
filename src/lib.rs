@@ -10,8 +10,11 @@ pub use upload::{sync_assets, SyncConfig};
 use thiserror::Error as ThisError;
 #[derive(Debug, ThisError)]
 pub enum Error {
-    #[error("KV Api error {0}")]
-    KVHttp(reqwest::Error),
+    #[error("KV Api error {0} (body) {1}")]
+    KVHttp(Box<dyn std::error::Error>, String),
+
+    #[error("KV Api error Status {0} (body) {1}")]
+    KVHttpStatus(u16, String),
 
     #[error("KV Key {0} not found. status={1}")]
     KVKeyNotFound(String, u16),

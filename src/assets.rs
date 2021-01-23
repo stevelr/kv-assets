@@ -105,13 +105,16 @@ impl<'ah> KVAssets<'ah> {
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .send()
             .await
-            .map_err(Error::KVHttp)?;
+            .map_err(|e| Error::KVHttp(Box::new(e), String::new()))?;
         match response.status().is_success() {
             false => Err(Error::KVKeyNotFound(
                 key.to_string(),
                 response.status().as_u16(),
             )),
-            true => Ok(response.bytes().await.map_err(Error::KVHttp)?),
+            true => Ok(response
+                .bytes()
+                .await
+                .map_err(|e| Error::KVHttp(Box::new(e), String::new()))?),
         }
     }
 
@@ -141,33 +144,47 @@ impl<'ah> KVAssets<'ah> {
         );
 
         let client = reqwest::Client::new();
-        let response = client
+        let resp = client
             .put(&url)
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .body(val)
             .send()
             .await
-            .map_err(Error::KVHttp)?
-            .json::<WriteKVResponse>()
+            .map_err(|e| Error::KVHttp(Box::new(e), String::new()))?;
+        let status = resp.status();
+        let bytes = resp
+            .bytes()
             .await
-            .map_err(Error::KVHttp)?;
-
-        if response.success {
+            .map_err(|e| Error::KVHttp(Box::new(e), String::new()))?;
+        if !status.is_success() {
+            return Err(Error::KVHttpStatus(
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes).to_string(),
+            ));
+        }
+        let resp: WriteKVResponse = match serde_json::from_slice(&bytes) {
+            Ok(wr) => Ok(wr),
+            Err(e) => Err(Error::KVHttp(
+                Box::new(e),
+                String::from_utf8_lossy(&bytes).to_string(),
+            )),
+        }?;
+        if resp.success {
             Ok(())
         } else {
             Err(Error::Message(format!(
                 "writing key {}: errors:{:?} messages:{:?}",
-                key, response.errors, response.messages
+                key, resp.errors, resp.messages
             )))
         }
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct WriteKVResponse {
     success: bool,
-    errors: Vec<String>,
-    messages: Vec<String>,
+    errors: Vec<serde_json::Value>,
+    messages: Vec<serde_json::Value>,
 }
 
 /// Tests manifest lookup function (does not invoke cloudflare api)
