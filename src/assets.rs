@@ -20,12 +20,28 @@ pub struct AssetMetadata {
 }
 
 /// Serves static assets out of Worker KV storage.
+#[allow(clippy::upper_case_acronyms)]
 pub struct KVAssets<'ah> {
     index: &'ah [u8],
-    account_id: &'ah str,
-    namespace_id: &'ah str,
-    auth_token: &'ah str,
     map: RefCell<Option<AssetIndex>>,
+    kv: KV,
+}
+
+/// Workers KV Parameters
+#[allow(clippy::upper_case_acronyms)]
+pub struct KV {
+    account_id: String,
+    namespace_id: String,
+    auth_token: String,
+}
+
+/// Initialize KV parameters
+pub fn init_kv<T: ToString>(account: T, namespace: T, token: T) -> KV {
+    KV {
+        account_id: account.to_string(),
+        namespace_id: namespace.to_string(),
+        auth_token: token.to_string(),
+    }
 }
 
 impl<'ah> KVAssets<'ah> {
@@ -36,16 +52,23 @@ impl<'ah> KVAssets<'ah> {
     /// - auth_token: cloudflare OAuth token
     pub fn init(
         index: &'ah [u8],
-        account_id: &'ah str,
-        namespace_id: &'ah str,
-        auth_token: &'ah str,
+        account_id: &'_ str,
+        namespace_id: &'_ str,
+        auth_token: &'_ str,
     ) -> Self {
         Self {
             index,
-            account_id,
-            namespace_id,
-            auth_token,
             map: RefCell::new(None),
+            kv: init_kv(account_id, namespace_id, auth_token),
+        }
+    }
+
+    /// Initialize with exiting KV parameters
+    pub fn init_with(index: &'ah [u8], kv: KV) -> Self {
+        Self {
+            index,
+            map: RefCell::new(None),
+            kv,
         }
     }
 
@@ -54,7 +77,10 @@ impl<'ah> KVAssets<'ah> {
     fn ensure_map(&self) -> Result<(), Error> {
         let mut map = self.map.borrow_mut();
         if (*map).is_none() {
-            *map = Some(bincode::deserialize(self.index).map_err(Error::DeserializeAssets)?);
+            *map = Some(
+                bincode::deserialize(self.index)
+                    .map_err(|e| Error::DeserializeAssets(e.to_string()))?,
+            );
         }
         Ok(())
     }
@@ -63,7 +89,7 @@ impl<'ah> KVAssets<'ah> {
     pub async fn get_asset(&self, key: &str) -> Result<Option<bytes::Bytes>, Error> {
         match self.lookup_key(key) {
             Ok(Some(md)) => {
-                let doc = self.get_kv_value(&md.path).await?;
+                let doc = self.kv.get_kv_value(&md.path).await?;
                 Ok(Some(doc))
             }
             Ok(None) => Ok(None),
@@ -95,6 +121,29 @@ impl<'ah> KVAssets<'ah> {
     /// - the value timed out via TTL
     /// - the index is out of date
     pub async fn get_kv_value(&self, key: &str) -> Result<bytes::Bytes, Error> {
+        self.kv.get_kv_value(key).await
+    }
+
+    /// Store a value in KV. Optionally, set expiration TTL, number of seconds in future
+    /// when content should be automatically deleted. TTL must be at least 60.
+    pub async fn put_kv_value<T: Into<reqwest::Body>>(
+        &self,
+        key: &str,
+        val: T,
+        expiration_ttl: Option<u64>,
+    ) -> Result<(), Error> {
+        self.kv.put_kv_value(key, val, expiration_ttl).await
+    }
+}
+
+impl KV {
+    /// Lookup asset in worker kV storage.
+    /// If the key passed had been obtained from lookup_key, but the value was not found,
+    /// then one of the following occurred:
+    /// - the asset was deleted from KV
+    /// - the value timed out via TTL
+    /// - the index is out of date
+    pub async fn get_kv_value(&self, key: &str) -> Result<bytes::Bytes, Error> {
         let url = format!(
             "{}/accounts/{}/storage/kv/namespaces/{}/values/{}",
             CLOUDFLARE_KV_ENDPOINT, &self.account_id, &self.namespace_id, key
@@ -105,7 +154,7 @@ impl<'ah> KVAssets<'ah> {
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .send()
             .await
-            .map_err(|e| Error::KVHttp(Box::new(e), String::new()))?;
+            .map_err(|e| Error::KVHttp(e.to_string(), String::new()))?;
         match response.status().is_success() {
             false => Err(Error::KVKeyNotFound(
                 key.to_string(),
@@ -114,8 +163,35 @@ impl<'ah> KVAssets<'ah> {
             true => Ok(response
                 .bytes()
                 .await
-                .map_err(|e| Error::KVHttp(Box::new(e), String::new()))?),
+                .map_err(|e| Error::KVHttp(e.to_string(), String::new()))?),
         }
+    }
+
+    /// Delete the key at path.
+    pub async fn delete_kv_value(&self, key: &str) -> Result<(), Error> {
+        let url = format!(
+            "{}/accounts/{}/storage/kv/namespaces/{}/values/{}",
+            CLOUDFLARE_KV_ENDPOINT, &self.account_id, &self.namespace_id, key,
+        );
+        let client = reqwest::Client::new();
+        let resp = client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await
+            .map_err(|e| Error::KVHttp(e.to_string(), String::new()))?;
+        let status = resp.status();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| Error::KVHttp(e.to_string(), String::new()))?;
+        if !status.is_success() {
+            return Err(Error::KVHttpStatus(
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes).to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Store a value in KV. Optionally, set expiration TTL, number of seconds in future
@@ -150,12 +226,12 @@ impl<'ah> KVAssets<'ah> {
             .body(val)
             .send()
             .await
-            .map_err(|e| Error::KVHttp(Box::new(e), String::new()))?;
+            .map_err(|e| Error::KVHttp(e.to_string(), String::new()))?;
         let status = resp.status();
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| Error::KVHttp(Box::new(e), String::new()))?;
+            .map_err(|e| Error::KVHttp(e.to_string(), String::new()))?;
         if !status.is_success() {
             return Err(Error::KVHttpStatus(
                 status.as_u16(),
@@ -165,7 +241,7 @@ impl<'ah> KVAssets<'ah> {
         let resp: WriteKVResponse = match serde_json::from_slice(&bytes) {
             Ok(wr) => Ok(wr),
             Err(e) => Err(Error::KVHttp(
-                Box::new(e),
+                e.to_string(),
                 String::from_utf8_lossy(&bytes).to_string(),
             )),
         }?;
@@ -181,6 +257,7 @@ impl<'ah> KVAssets<'ah> {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(clippy::upper_case_acronyms)]
 struct WriteKVResponse {
     success: bool,
     errors: Vec<serde_json::Value>,

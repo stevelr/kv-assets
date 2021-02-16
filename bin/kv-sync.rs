@@ -18,7 +18,7 @@ struct Opt {
     #[clap(short,long, value_hint=ValueHint::FilePath, default_value="data/assets.bin")]
     output: PathBuf,
 
-    /// Dump contents of existing asset.bin file
+    /// Dump contents of asset.bin file
     #[clap(long, value_hint=ValueHint::FilePath)]
     dump: Option<PathBuf>,
 
@@ -36,8 +36,8 @@ fn main() {
 }
 
 fn run(opt: Opt) -> Result<(), kv_assets::Error> {
-    if let Some(dump_file) = opt.dump {
-        return dump(&dump_file);
+    if let Some(asset_file) = opt.dump {
+        return dump(&asset_file);
     }
     let args = SyncConfig {
         output_path: &opt.output,
@@ -60,7 +60,8 @@ fn dump(path: &std::path::Path) -> Result<(), kv_assets::Error> {
             e.to_string()
         ))
     })?;
-    let map: AssetIndex = bincode::deserialize(&blob).map_err(Error::DeserializeAssets)?;
+    let map: AssetIndex =
+        bincode::deserialize(&blob).map_err(|e| Error::DeserializeAssets(e.to_string()))?;
     let json = serde_json::to_string_pretty(&map)
         .map_err(|e| Error::Message(format!("json serialization error: {}", e.to_string())))?;
     println!("{}", json);
